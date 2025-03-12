@@ -9,8 +9,7 @@ class CaseManager {
     }
 
     initializeFirebase() {
-        this.auth = firebase.auth();
-        this.storage = firebase.storage();
+        this.auth = auth; // Using the exported auth from firebase-config.js
         
         // Set up auth state listener
         this.auth.onAuthStateChanged((user) => {
@@ -93,10 +92,12 @@ class CaseManager {
 
     async uploadAttachment(caseId, file) {
         try {
-            const storageRef = this.storage.ref();
-            const fileRef = storageRef.child(`attachments/${caseId}/${file.name}`);
-            await fileRef.put(file);
-            const downloadURL = await fileRef.getDownloadURL();
+            if (file.size > 100 * 1024 * 1024) { // 100MB limit for B2
+                throw new Error('File size must be less than 100MB');
+            }
+
+            // Upload to B2
+            const b2Result = await uploadToB2(file);
 
             if (!this.attachments[caseId]) {
                 this.attachments[caseId] = [];
@@ -105,7 +106,10 @@ class CaseManager {
             const attachment = {
                 id: this.generateId(),
                 name: file.name,
-                url: downloadURL,
+                type: file.type,
+                size: file.size,
+                fileId: b2Result.fileId,
+                downloadUrl: b2Result.downloadUrl,
                 uploadedAt: new Date().toISOString(),
                 uploadedBy: this.auth.currentUser?.email || 'anonymous'
             };
@@ -117,6 +121,10 @@ class CaseManager {
             console.error('Error uploading attachment:', error);
             throw error;
         }
+    }
+
+    downloadAttachment(attachment) {
+        window.open(attachment.downloadUrl, '_blank');
     }
 
     saveToStorage() {
@@ -191,29 +199,68 @@ class CaseManager {
 class UI {
     constructor(caseManager) {
         this.caseManager = caseManager;
+        this.attachments = caseManager.attachments; // Reference to attachments
         this.initializeEventListeners();
         this.renderCases();
     }
 
-    renderAttachments(caseId) {
-        const attachments = this.attachments[caseId] || [];
-        if (attachments.length === 0) {
-            return '<p class="text-gray-500 italic">No attachments yet</p>';
+    handleFileUpload = async (file, caseId) => {
+        const uploadBtn = document.getElementById('uploadAttachmentBtn');
+        const uploadText = uploadBtn.querySelector('.upload-text');
+        const uploadProgress = uploadBtn.querySelector('.upload-progress');
+        const progressDiv = document.getElementById('uploadProgress');
+        const progressBar = document.getElementById('uploadProgressBar');
+        const statusText = document.getElementById('uploadStatus');
+
+        try {
+            // Disable upload button and show progress UI
+            uploadBtn.disabled = true;
+            uploadText.classList.add('hidden');
+            uploadProgress.classList.remove('hidden');
+            progressDiv.classList.remove('hidden');
+            
+            // Show initial status
+            statusText.textContent = 'Preparing upload...';
+            progressBar.style.width = '0%';
+
+            // Upload the file
+            const attachment = await this.caseManager.uploadAttachment(caseId, file);
+            
+            // Update progress to complete
+            progressBar.style.width = '100%';
+            statusText.textContent = 'Upload complete!';
+
+            // Update attachments list in UI
+            const attachmentsList = document.getElementById('attachmentsList');
+            if (attachmentsList) {
+                attachmentsList.innerHTML = this.renderAttachments(caseId);
+            }
+
+            // Reset UI after short delay
+            setTimeout(() => {
+                uploadBtn.disabled = false;
+                uploadText.classList.remove('hidden');
+                uploadProgress.classList.add('hidden');
+                progressDiv.classList.add('hidden');
+                document.getElementById('fileAttachment').value = '';
+            }, 1500);
+
+            return attachment;
+        } catch (error) {
+            // Show error in status
+            statusText.textContent = `Error: ${error.message}`;
+            progressBar.style.backgroundColor = '#ef4444'; // red-500
+
+            // Reset UI after delay
+            setTimeout(() => {
+                uploadBtn.disabled = false;
+                uploadText.classList.remove('hidden');
+                uploadProgress.classList.add('hidden');
+                progressDiv.classList.add('hidden');
+            }, 3000);
+
+            console.error('Error uploading file:', error);
         }
-        
-        return attachments.map(attachment => `
-            <div class="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
-                <div class="flex items-center">
-                    <i class="fas fa-paperclip text-gray-400 mr-2"></i>
-                    <a href="${attachment.url}" target="_blank" class="text-blue-600 hover:text-blue-800">
-                        ${attachment.name}
-                    </a>
-                </div>
-                <div class="text-sm text-gray-500">
-                    Uploaded by ${attachment.uploadedBy}
-                </div>
-            </div>
-        `).join('');
     }
 
     async signInWithGoogle() {
@@ -260,17 +307,16 @@ class UI {
         // File upload button
         document.getElementById('uploadAttachmentBtn').addEventListener('click', async () => {
             const fileInput = document.getElementById('fileAttachment');
-            const caseId = this.currentCaseId; // Assuming you have a way to track the current case ID
             if (fileInput.files.length > 0) {
-                const file = fileInput.files[0];
-                try {
-                    const attachment = await this.uploadAttachment(caseId, file);
-                    console.log('Attachment uploaded:', attachment);
-                    // Optionally, update the UI to show the uploaded attachment
-                } catch (error) {
-                    console.error('Error uploading attachment:', error);
-                }
+                await this.handleFileUpload(fileInput.files[0], this.currentCaseId);
             }
+        });
+
+        // File input change
+        document.getElementById('fileAttachment').addEventListener('change', (e) => {
+            const fileInput = e.target;
+            const uploadBtn = document.getElementById('uploadAttachmentBtn');
+            uploadBtn.disabled = fileInput.files.length === 0;
         });
         // New Case Button
         document.getElementById('newCaseBtn').addEventListener('click', () => {
@@ -478,6 +524,64 @@ class UI {
         `;
 
         this.showModal('caseDetailModal');
+    }
+
+    renderAttachments(caseId) {
+        const attachments = this.attachments[caseId] || [];
+        if (attachments.length === 0) {
+            return '<p class="text-gray-500 italic">No attachments yet</p>';
+        }
+
+        return attachments.map(attachment => {
+            const fileIcon = this.getFileIcon(attachment.type);
+            return `
+                <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors duration-200">
+                    <div class="flex items-center flex-1 min-w-0">
+                        <i class="${fileIcon} text-blue-500 text-lg mr-3"></i>
+                        <div class="flex-1 min-w-0">
+                            <p class="font-medium text-gray-900 truncate">
+                                ${attachment.name}
+                            </p>
+                            <p class="text-sm text-gray-500">
+                                ${this.formatFileSize(attachment.size)} • 
+                                ${new Date(attachment.uploadedAt).toLocaleString()}
+                            </p>
+                        </div>
+                    </div>
+                    <div class="flex items-center ml-4">
+                        <span class="text-sm text-gray-500 mr-4">
+                            ${attachment.uploadedBy}
+                        </span>
+                        <button onclick="ui.downloadAttachment(${JSON.stringify(attachment)})" 
+                                class="text-blue-600 hover:text-blue-800 p-2 rounded-full hover:bg-blue-50">
+                            <i class="fas fa-download"></i>
+                        </button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    getFileIcon(mimeType) {
+        if (!mimeType) return 'fas fa-file';
+        
+        if (mimeType.startsWith('image/')) return 'fas fa-file-image';
+        if (mimeType.startsWith('video/')) return 'fas fa-file-video';
+        if (mimeType.startsWith('audio/')) return 'fas fa-file-audio';
+        if (mimeType.includes('pdf')) return 'fas fa-file-pdf';
+        if (mimeType.includes('word') || mimeType.includes('document')) return 'fas fa-file-word';
+        if (mimeType.includes('excel') || mimeType.includes('spreadsheet')) return 'fas fa-file-excel';
+        if (mimeType.includes('powerpoint') || mimeType.includes('presentation')) return 'fas fa-file-powerpoint';
+        if (mimeType.includes('zip') || mimeType.includes('archive')) return 'fas fa-file-archive';
+        if (mimeType.includes('text/')) return 'fas fa-file-alt';
+        
+        return 'fas fa-file';
+    }
+
+    formatFileSize(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        else if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+        else return (bytes / 1048576).toFixed(1) + ' MB';
     }
 
     renderNote(note, caseId) {
