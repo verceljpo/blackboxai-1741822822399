@@ -21,31 +21,63 @@ class CaseManager {
         });
     }
 
-    initializeRichTextEditors() {
-        // Initialize TinyMCE for case description
-        tinymce.init({
-            selector: '#caseDescription',
-            height: 300,
-            menubar: false,
-            plugins: [
-                'advlist', 'autolink', 'lists', 'link', 'image', 'charmap', 'preview',
-                'anchor', 'searchreplace', 'visualblocks', 'code', 'fullscreen',
-                'insertdatetime', 'media', 'table', 'help', 'wordcount'
-            ],
-            toolbar: 'undo redo | formatselect | ' +
-                'bold italic backcolor | alignleft aligncenter ' +
-                'alignright alignjustify | bullist numlist outdent indent | ' +
-                'removeformat | help',
+    initializeRichTextEditor(elementId, placeholder) {
+        return new Quill(elementId, {
+            theme: 'snow',
+            modules: {
+                toolbar: [
+                    ['bold', 'italic', 'underline'],
+                    [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+                    ['clean']
+                ]
+            },
+            placeholder: placeholder
         });
+    }
 
-        // Initialize TinyMCE for notes
-        tinymce.init({
-            selector: '#newNote',
-            height: 200,
-            menubar: false,
-            plugins: ['advlist', 'autolink', 'lists', 'link', 'charmap'],
-            toolbar: 'undo redo | formatselect | bold italic | bullist numlist',
-        });
+    showModal(modalId) {
+        const modal = document.getElementById(modalId);
+        modal.classList.remove('hidden');
+
+        // If it's the new case modal, initialize the description editor
+        if (modalId === 'newCaseModal') {
+            setTimeout(() => {
+                this.descriptionEditor = this.initializeRichTextEditor('#description-editor', 'Enter case description...');
+            }, 100);
+        }
+
+        // If it's the case detail modal, initialize the note editor
+        if (modalId === 'caseDetailModal') {
+            setTimeout(() => {
+                this.noteEditor = this.initializeRichTextEditor('#note-editor', 'Add a note...');
+            }, 100);
+        }
+
+        // If it's the new case modal, populate the case manager dropdown
+        if (modalId === 'newCaseModal') {
+            const caseManagerSelect = document.getElementById('caseManager');
+            caseManagerSelect.innerHTML = '<option value="">Select Case Manager</option>';
+            
+            // Get case managers from admin panel
+            adminPanel.caseManagers.forEach(cm => {
+                const option = document.createElement('option');
+                option.value = cm.email;
+                option.textContent = cm.name;
+                caseManagerSelect.appendChild(option);
+            });
+        }
+    }
+
+    hideModal(modalId) {
+        document.getElementById(modalId).classList.add('hidden');
+        
+        // Clean up editors when modal is closed
+        if (modalId === 'newCaseModal' && this.descriptionEditor) {
+            this.descriptionEditor = null;
+        }
+        if (modalId === 'caseDetailModal' && this.noteEditor) {
+            this.noteEditor = null;
+        }
     }
 
     handleUserSignIn(user) {
@@ -137,7 +169,7 @@ class CaseManager {
         const newCase = {
             id: this.generateId(),
             title: caseData.title,
-            description: tinymce.get('caseDescription').getContent(),
+            description: this.descriptionEditor.root.innerHTML,
             priority: caseData.priority,
             caseManager: caseData.caseManager,
             status: 'open',
@@ -174,7 +206,7 @@ class CaseManager {
     addNote(caseId, noteText) {
         const note = {
             id: this.generateId(),
-            content: tinymce.get('newNote').getContent(),
+            content: this.noteEditor.root.innerHTML,
             createdAt: new Date().toISOString(),
             createdBy: this.auth.currentUser?.email || 'anonymous'
         };
@@ -200,6 +232,8 @@ class UI {
     constructor(caseManager) {
         this.caseManager = caseManager;
         this.attachments = caseManager.attachments; // Reference to attachments
+        this.descriptionEditor = null;
+        this.noteEditor = null;
         this.initializeEventListeners();
         this.renderCases();
     }
@@ -328,14 +362,26 @@ class UI {
             e.preventDefault();
             const formData = {
                 title: document.getElementById('caseTitle').value,
-                description: tinymce.get('caseDescription').getContent(),
+                description: this.caseManager.descriptionEditor.root.innerHTML,
                 priority: document.getElementById('casePriority').value,
                 caseManager: document.getElementById('caseManager').value
             };
             const newCase = this.caseManager.createCase(formData);
             this.hideModal('newCaseModal');
             this.renderCases();
+            
+            // Reset form and Quill editor
             this.resetForm('newCaseForm');
+            this.caseManager.descriptionEditor.setText('');
+        });
+
+        // Initialize Quill editors after modal is shown
+        document.getElementById('newCaseBtn').addEventListener('click', () => {
+            this.showModal('newCaseModal');
+            // Short delay to ensure modal is visible before initializing Quill
+            setTimeout(() => {
+                this.caseManager.initializeRichTextEditors();
+            }, 100);
         });
 
         // Search Input
@@ -358,12 +404,12 @@ class UI {
         // New Note Form
         document.getElementById('newNoteForm').addEventListener('submit', (e) => {
             e.preventDefault();
-            const noteText = document.getElementById('newNote').value;
             const caseId = e.target.dataset.caseId;
+            const noteText = this.caseManager.noteEditor.root.innerHTML;
             if (noteText && caseId) {
                 const note = this.caseManager.addNote(caseId, noteText);
                 this.renderNote(note, caseId);
-                document.getElementById('newNote').value = '';
+                this.caseManager.noteEditor.setText('');
             }
         });
     }
@@ -508,20 +554,24 @@ class UI {
         const notes = this.caseManager.notes[caseId] || [];
         notes.forEach(note => this.renderNote(note, caseId));
 
-        // Set up new note form with enhanced styling
+        // Set up new note form
         const noteForm = document.getElementById('newNoteForm');
         noteForm.dataset.caseId = caseId;
-        noteForm.className = 'mt-6';
-        noteForm.innerHTML = `
-            <div class="relative">
-                <textarea id="newNote" placeholder="Add a note..." rows="2"
-                        class="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-24"></textarea>
-                <button type="submit" class="absolute right-2 bottom-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200 flex items-center">
-                    <i class="fas fa-plus mr-2"></i>
-                    Add Note
-                </button>
-            </div>
-        `;
+        
+        // Initialize note editor after form is set up
+        setTimeout(() => {
+            this.caseManager.noteEditor = new Quill('#newNote', {
+                theme: 'snow',
+                placeholder: 'Add a note...',
+                modules: {
+                    toolbar: [
+                        ['bold', 'italic', 'underline'],
+                        [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+                        ['clean']
+                    ]
+                }
+            });
+        }, 100);
 
         this.showModal('caseDetailModal');
     }
