@@ -1,10 +1,10 @@
 // Backblaze B2 Configuration
 const b2Config = {
-    applicationKeyId: 'YOUR_KEY_ID',
-    applicationKey: 'YOUR_APPLICATION_KEY',
-    bucketId: 'YOUR_BUCKET_ID',
-    bucketName: 'YOUR_BUCKET_NAME',
-    endpoint: 'https://f000.backblazeb2.com', // Replace with your endpoint
+    applicationKeyId: '0053b3001ccd7450000000001',
+    applicationKey: 'K005LSPtZw+NdkrMtD2VknVjpuAxs04',
+    bucketId: '331ba3d0c0318ccc9d570415',
+    bucketName: 'knoscases',
+    endpoint: 'https://s3.us-east-005.backblazeb2.com', // Replace with your endpoint
 };
 
 // Helper function to get authorization token
