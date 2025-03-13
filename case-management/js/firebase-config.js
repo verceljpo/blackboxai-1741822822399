@@ -1,10 +1,10 @@
 // Firebase configuration for Authentication only
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_AUTH_DOMAIN",
-  projectId: "YOUR_PROJECT_ID",
-  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-  appId: "YOUR_APP_ID"
+  apiKey: "AIzaSyDv0bKeF_WWTPcXUG3z2mTFiIT5epP0FK4",
+  authDomain: "case-dc6f3.firebaseapp.com",
+  projectId: "case-dc6f3",
+  messagingSenderId: "222092038790",
+  appId: "1:222092038790:web:f9d9ab138bb2b8363d3707"
 };
 
 // Initialize Firebase
